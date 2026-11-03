@@ -1,0 +1,13 @@
+name: Build
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - run: unzip Avalon_v0.3.1.zip -d ./src
+    - uses: actions/setup-java@v3
+      with: {java-version: '17', distribution: 'temurin'}
+    - run: cd ./src && chmod +x gradlew && ./gradlew assembleDebug
+    - uses: actions/upload-artifact@v3
+      with: {name: APK, path: ./src/app/build/outputs/apk/debug/*.apk}
