@@ -24,14 +24,14 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Install AutoJs6 ApkBuilder (绕过Bug插件，原生安装)
+      - name: Install AutoJs6 ApkBuilder
         run: npm install -g autojs6-apkbuilder
 
       - name: Download AutoJs6 Template APK
         run: wget https://github.com/SuperMonster003/AutoJs6/releases/download/v6.7.0/autojs6-v6.7.0-universal-047ae62e.apk -O autojs6.apk
 
-      - name: Build Standalone APK (原生命令行打包)
-        run: autojs6-apkbuilder -a autojs6.apk -s . -o Treasure.apk
+      - name: Build Standalone APK (强制通过 Node 执行)
+        run: node $(which autojs6-apkbuilder) -a autojs6.apk -s . -o Treasure.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
