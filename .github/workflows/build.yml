@@ -1,4 +1,4 @@
-name: Build APK
+name: Build Treasure APK
 
 on:
   workflow_dispatch:
@@ -6,35 +6,77 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
+concurrency:
+  group: treasure-apk-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
+    name: Test and build Treasure
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+
     steps:
-      - name: Checkout Repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-
-      - name: Setup Node.js
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: "22"
 
-      - name: Install AutoJs6 ApkBuilder
-        run: npm install -g autojs6-apkbuilder
+      - name: Check project files
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f main.js
+          test -f config.js
+          test -f core.js
+          test -f project.json
+          test -f icon.png
+          test -f tests/logic.test.js
+          node -e "const p=require('./project.json'); if(p.name!=='Treasure') throw new Error('Wrong app name'); if(p.mainScriptFileName!=='main.js') throw new Error('Wrong entry'); if(!p.iconPath) throw new Error('Missing icon'); console.log('Project OK:',p.name);"
 
-      - name: Download AutoJs6 Template APK
-        run: wget https://github.com/SuperMonster003/AutoJs6/releases/download/v6.7.0/autojs6-v6.7.0-universal-047ae62e.apk -O autojs6.apk
+      - name: Run logic tests
+        run: node tests/logic.test.js
 
-      - name: Build Standalone APK (强制通过 Node 执行)
-        run: node $(which autojs6-apkbuilder) -a autojs6.apk -s . -o Treasure.apk
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
 
-      - name: Upload APK
+      - name: Download AutoJs6 6.7.0 template APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "https://github.com/SuperMonster003/AutoJs6/releases/download/v6.7.0/autojs6-v6.7.0-universal-047ae62e.apk" \
+            --output autojs6-template.apk
+          test -s autojs6-template.apk
+
+      - name: Build standalone Treasure APK
+        uses: Steven-Qiang/AutoJs6-ApkBuilder@main
+        with:
+          autojs: autojs6-template.apk
+          source: .
+          output: Treasure.apk
+
+      - name: Verify APK output
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s Treasure.apk
+          ls -lh Treasure.apk
+          file Treasure.apk
+
+      - name: Upload Treasure APK
         uses: actions/upload-artifact@v4
         with:
           name: Treasure-apk
           path: Treasure.apk
+          if-no-files-found: error
+          retention-days: 14
