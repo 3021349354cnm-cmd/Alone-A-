@@ -25,19 +25,87 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Download AutoJs6 6.7.0 template APK
+      - name: Download AutoJs6 6.7.0 APK
         shell: bash
         run: |
           curl --fail --location --retry 3 --retry-delay 2 \
             "https://github.com/SuperMonster003/AutoJs6/releases/download/v6.7.0/autojs6-v6.7.0-universal-047ae62e.apk" \
-            --output autojs6-template.apk
+            --output autojs6-host.apk
 
-      - name: Build standalone Treasure APK
-        uses: Steven-Qiang/AutoJs6-ApkBuilder@main
-        with:
-          autojs: autojs6-template.apk
-          source: .
-          output: Treasure.apk
+      - name: Build and Sign Treasure APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          
+          # 1. 下载官方 Apktool 工具
+          curl --fail --location --retry 3 \
+            "https://github.com/iBotPeaches/Apktool/releases/download/v2.9.3/apktool_2.9.3.jar" \
+            --output apktool.jar
+
+          # 2. 提取 AutoJs6 内置打包模板与运行库
+          mkdir -p host_apk
+          unzip -q autojs6-host.apk -d host_apk
+          TEMPLATE_APK=$(find host_apk -name "*template*.apk" -o -name "*inrt*.apk" | head -n 1)
+          if [ -z "$TEMPLATE_APK" ]; then
+            TEMPLATE_APK="autojs6-host.apk"
+          fi
+
+          # 3. 解包模板 APK（保留原 dex 加速打包）
+          java -jar apktool.jar d -f -s "$TEMPLATE_APK" -o decoded_apk
+
+          # 4. 补全运行所需的原生库与基础资源
+          mkdir -p decoded_apk/lib
+          if [ -d host_apk/lib/arm64-v8a ]; then
+            cp -rn host_apk/lib/arm64-v8a decoded_apk/lib/
+          fi
+          if [ -d host_apk/lib/armeabi-v7a ]; then
+            cp -rn host_apk/lib/armeabi-v7a decoded_apk/lib/
+          fi
+          mkdir -p decoded_apk/assets
+          cp -rn host_apk/assets/* decoded_apk/assets/ 2>/dev/null || true
+          rm -f decoded_apk/assets/*template*.apk decoded_apk/assets/*inrt*.apk
+
+          # 5. 写入 Treasure 项目脚本与图标
+          python3 -c "
+          import json, os, re
+          p = json.load(open('project.json', 'r', encoding='utf-8')) if os.path.exists('project.json') else {}
+          p.setdefault('name', 'Treasure')
+          p.setdefault('main', p.get('mainScriptFileName', 'main.js'))
+          p.setdefault('mainScriptFileName', p.get('main', 'main.js'))
+          p.setdefault('packageName', 'org.autojs.autojs6.treasure')
+          p.setdefault('versionName', '1.0.0')
+          p.setdefault('versionCode', 1)
+          if os.path.exists('icon.png'):
+              p.setdefault('icon', 'icon.png')
+              p.setdefault('iconPath', 'icon.png')
+          json.dump(p, open('project.json', 'w', encoding='utf-8'), ensure_ascii=False, indent=2)
+
+          manifest_path = 'decoded_apk/AndroidManifest.xml'
+          if os.path.exists(manifest_path):
+              m = open(manifest_path, 'r', encoding='utf-8').read()
+              m = re.sub(r'android:label=\"[^\"]*\"', 'android:label=\"Treasure\"', m)
+              if os.path.exists('icon.png'):
+                  os.makedirs('decoded_apk/res/drawable', exist_ok=True)
+                  import shutil
+                  shutil.copy('icon.png', 'decoded_apk/res/drawable/app_custom_icon.png')
+                  m = re.sub(r'android:icon=\"[^\"]*\"', 'android:icon=\"@drawable/app_custom_icon\"', m)
+                  m = re.sub(r'android:roundIcon=\"[^\"]*\"', 'android:roundIcon=\"@drawable/app_custom_icon\"', m)
+              open(manifest_path, 'w', encoding='utf-8').write(m)
+          "
+
+          mkdir -p decoded_apk/assets/project
+          cp -f *.js *.json decoded_apk/assets/project/ 2>/dev/null || true
+          if [ -f icon.png ]; then
+            cp -f icon.png decoded_apk/assets/project/
+          fi
+
+          # 6. 重新封装并执行安卓签名
+          java -jar apktool.jar b decoded_apk -o unsigned.apk || java -jar apktool.jar b --use-aapt1 decoded_apk -o unsigned.apk
+          ZIPALIGN=$(find "$ANDROID_HOME/build-tools" -name "zipalign" | sort -V | tail -n 1)
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name "apksigner" | sort -V | tail -n 1)
+          "$ZIPALIGN" -p -f 4 unsigned.apk aligned.apk
+          keytool -genkeypair -v -keystore release.keystore -alias treasure -keyalg RSA -keysize 2048 -validity 10000 -storepass 123456 -keypass 123456 -dname "CN=Treasure, OU=Dev, O=Treasure, L=CN, ST=CN, C=CN"
+          "$APKSIGNER" sign --ks release.keystore --ks-pass pass:123456 --key-pass pass:123456 --out Treasure.apk aligned.apk
 
       - name: Upload Treasure APK
         uses: actions/upload-artifact@v4
